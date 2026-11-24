@@ -27,6 +27,8 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import java.io.File
 import java.io.FileOutputStream
@@ -76,6 +78,19 @@ class MainActivity : AppCompatActivity() {
         offlineLayout = findViewById(R.id.offlineLayout)
         btnRetry = findViewById(R.id.btnRetry)
 
+        // Apply safe-area padding for display cutouts, status bar, nav bar, and IME keyboard
+        ViewCompat.setOnApplyWindowInsetsListener(swipeRefreshLayout) { view, insets ->
+            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
+            view.setPadding(
+                systemBars.left,
+                systemBars.top,
+                systemBars.right,
+                maxOf(systemBars.bottom, ime.bottom)
+            )
+            insets
+        }
+
         setupWebView()
         setupSwipeRefresh()
         setupBackPressHandler()
@@ -89,10 +104,27 @@ class MainActivity : AppCompatActivity() {
         }
 
         val targetUrl = getString(R.string.default_web_url)
-        if (isNetworkAvailable()) {
+        if (savedInstanceState != null && webView.restoreState(savedInstanceState) != null) {
+            offlineLayout.visibility = View.GONE
+            webView.visibility = View.VISIBLE
+        } else if (isNetworkAvailable()) {
             webView.loadUrl(targetUrl)
         } else {
             showOfflineView()
+        }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        if (::webView.isInitialized) {
+            webView.saveState(outState)
+        }
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (::webView.isInitialized && level >= TRIM_MEMORY_RUNNING_LOW) {
+            webView.clearCache(false)
         }
     }
 
@@ -125,7 +157,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+            settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
         }
 
         val defaultUserAgent = settings.userAgentString
@@ -189,6 +221,17 @@ class MainActivity : AppCompatActivity() {
                 return handleUrlNavigation(url)
             }
 
+            override fun onRenderProcessGone(
+                view: WebView?,
+                detail: RenderProcessGoneDetail?
+            ): Boolean {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && view === webView) {
+                    webView.reload()
+                    return true
+                }
+                return super.onRenderProcessGone(view, detail)
+            }
+
             @Deprecated("Deprecated in Java")
             override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
                 if (url == null) return false
@@ -207,9 +250,14 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPermissionRequest(request: PermissionRequest?) {
                 try {
-                    request?.grant(request.resources)
+                    val host = request?.origin?.host?.lowercase() ?: ""
+                    if (host == "vijaysetu.vercel.app" || host.endsWith(".vijaysetu.in") || host.endsWith("piyushassudani.in")) {
+                        request?.grant(request.resources)
+                    } else {
+                        request?.deny()
+                    }
                 } catch (e: Exception) {
-                    super.onPermissionRequest(request)
+                    request?.deny()
                 }
             }
 
